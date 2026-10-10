@@ -30,6 +30,21 @@ It works with **Claude Code**, **Codex**, **Cursor** and **OpenCode** through
 their hooks, and catches everything else (other agents, your own edits,
 commits) by looking at the working tree.
 
+## Supported agents
+
+| Agent | Command | Hooked through | Session titles | Checked against |
+|---|---|---|---|---|
+| Claude Code | `claude` | `UserPromptSubmit` + `Stop` hooks in `~/.claude/settings.json` | Claude's own, from its transcripts | 2.1.280, daily use |
+| Codex CLI | `codex` | `UserPromptSubmit` + `Stop` hooks in `~/.codex/hooks.json` | Codex's thread names | 0.160.1, simulated hook payloads |
+| OpenCode | `opencode` | a plugin in `~/.config/opencode/plugin/` | OpenCode's, saved by the plugin | 1.18.35, live run |
+| Cursor | `cursor-agent` and the editor | `beforeSubmitPrompt` + `stop` hooks in `~/.cursor/hooks.json` | the first prompt | not yet run live |
+
+Each prompt is labelled with the agent that ran it. Any other agent (Aider,
+Gemini CLI and the rest) still has its edits recorded, as `you` rows, since
+agent-diff watches the working tree; it just can't say which prompt made
+them. Supporting one properly means a hook that sends `agent-diff hook` a
+submit and a stop event; see [How it works](#how-it-works).
+
 ## Install
 
 Needs Ruby 3.0+ and git. No gems.
