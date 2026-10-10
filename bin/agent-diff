@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+#
+# agent-diff — per-prompt diffs for multi-agent coding sessions.
+#
+# Thin shim: resolves a Ruby and execs the real CLI. Everything below this
+# file is stdlib-only Ruby.
+#
+# Why a real interpreter is preferred over PATH: `ruby` on PATH is often an
+# asdf/mise shim. Hooks run non-interactively, where the version manager's
+# environment may not be set up, so a PATH lookup can fail in exactly the
+# context that matters most. See lib/pick_ruby.sh.
+set -euo pipefail
+
+# Resolve symlinks: this file is linked onto PATH (~/.local/bin/agent-diff),
+# so $BASH_SOURCE points at the link, not the module. The lib/ it needs lives
+# next to the real file.
+SELF="${BASH_SOURCE[0]}"
+while [ -L "$SELF" ]; do
+  LINK="$(readlink "$SELF")"
+  case "$LINK" in
+    /*) SELF="$LINK" ;;
+    *)  SELF="$(dirname -- "$SELF")/$LINK" ;;
+  esac
+done
+ROOT="$(cd -- "$(dirname -- "$SELF")/.." && pwd)"
+
+# shellcheck source=../lib/pick_ruby.sh
+. "$ROOT/lib/pick_ruby.sh"
+RUBY="$(pick_ruby)" || {
+  echo "agent-diff: no ruby found (tried /usr/bin/ruby, Homebrew, PATH)" >&2
+  exit 127
+}
+
+# -E: hooks run with no LANG, where Ruby would read git's output as US-ASCII
+# and fail on the first prompt containing a non-ASCII character.
+exec "$RUBY" -E UTF-8:UTF-8 -I "$ROOT/lib" "$ROOT/lib/agent_diff/cli.rb" "$@"
