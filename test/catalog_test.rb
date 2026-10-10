@@ -108,6 +108,13 @@ class CatalogTest < Minitest::Test
     assert_equal "Tweak a", by_id["s-one"]
   end
 
+  def test_saved_titles_name_sessions_with_no_transcript
+    FileUtils.mkdir_p(File.join(@home, "titles"))
+    File.write(File.join(@home, "titles", "s-two.txt"), "Add the b file\n")
+    by_id = @catalog.sessions(@shadow).to_h { |s| [s.id, s.title] }
+    assert_equal "Add the b file", by_id["s-two"]
+  end
+
   def test_totals_match_stat
     @catalog.sessions(@shadow).flat_map(&:entries).each do |e|
       stat = @shadow.stat(e[:sha])

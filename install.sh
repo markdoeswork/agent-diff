@@ -36,6 +36,7 @@ if [ "$UNINSTALL" = 1 ]; then
   "$RUBY" "$ROOT/hooks/install_claude_hooks.rb" --uninstall
   [ -d "$HOME/.cursor" ] && "$RUBY" "$ROOT/hooks/install_cursor_hooks.rb" --uninstall
   [ -d "${CODEX_HOME:-$HOME/.codex}" ] && "$RUBY" "$ROOT/hooks/install_codex_hooks.rb" --uninstall
+  "$RUBY" "$ROOT/hooks/install_opencode_plugin.rb" --uninstall
   echo "recorded history is left in ${AGENT_DIFF_HOME:-$HOME/.local/share/agent_diff}"
   exit 0
 fi
@@ -56,6 +57,9 @@ if [ "$HOOKS" = 1 ]; then
   fi
   if [ -d "${CODEX_HOME:-$HOME/.codex}" ]; then
     "$RUBY" "$ROOT/hooks/install_codex_hooks.rb"
+  fi
+  if [ -d "${OPENCODE_CONFIG_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/opencode}" ]; then
+    "$RUBY" "$ROOT/hooks/install_opencode_plugin.rb"
   fi
 fi
 

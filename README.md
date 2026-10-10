@@ -26,9 +26,9 @@ prompt that made them.
        ▸ mod   test/middleware/rate_limit_test.rb                                +17 -7
 ```
 
-It works with **Claude Code**, **Codex** and **Cursor** through their hooks,
-and catches everything else (other agents, your own edits, commits) by
-looking at the working tree.
+It works with **Claude Code**, **Codex**, **Cursor** and **OpenCode** through
+their hooks, and catches everything else (other agents, your own edits,
+commits) by looking at the working tree.
 
 ## Install
 
@@ -43,7 +43,9 @@ cd agent-diff
 `install.sh` links `agent-diff` into `~/.local/bin` (`BIN_DIR` overrides) and
 adds hooks to `~/.claude/settings.json` and, if they are installed, Codex's
 `~/.codex/hooks.json` (`CODEX_HOME` overrides) and Cursor's
-`~/.cursor/hooks.json`. Your other hooks are left alone. It is safe to re-run,
+`~/.cursor/hooks.json`. OpenCode has plugins rather than hooks, so it gets
+`~/.config/opencode/plugin/agent-diff.js` (restart OpenCode to load it).
+Your other hooks are left alone. It is safe to re-run,
 and re-running after moving the checkout re-points everything.
 `./install.sh --no-hooks` links only; `./install.sh --uninstall` removes the
 link and the hooks but keeps recorded history.
@@ -52,8 +54,8 @@ Codex runs a new hook only after you trust it, so the first Codex session after
 installing asks you to review the two agent-diff hooks. Approve them once and
 Codex runs them from then on.
 
-From then on, every prompt you give Claude Code, Codex or Cursor inside a git
-repo is recorded. Run `agent-diff` to look.
+From then on, every prompt you give Claude Code, Codex, Cursor or OpenCode
+inside a git repo is recorded. Run `agent-diff` to look.
 
 ## The browser
 
@@ -82,9 +84,9 @@ and agent. `Enter` jumps there, `Esc` closes it. Work no hook claimed sits
 under each repo's "hand edits & commits".
 
 **Session titles** are the ones the agent gave the session: Claude Code's, read
-from its transcripts in `~/.claude/projects`, and Codex's thread names, read
-from `~/.codex/session_index.jsonl`. Cursor sessions are titled by their first
-prompt.
+from its transcripts in `~/.claude/projects`, Codex's thread names, read
+from `~/.codex/session_index.jsonl`, and OpenCode's, which the plugin saves as
+they change. Cursor sessions are titled by their first prompt.
 
 **Blocks** are the enclosing `def`, `class`, `func` and so on. They come from
 git's own hunk headers: git ships function-name patterns for Ruby, Python,
@@ -112,7 +114,7 @@ the real working tree, the same `--git-dir` / `--work-tree` split people use to
 keep their dotfiles in a bare repo.
 
 ```
-Claude / Codex / Cursor hook ──> agent-diff hook ──> one shadow commit per prompt
+agent hook or plugin ──> agent-diff hook ──> one shadow commit per prompt
                                                            │
                                                       agent-diff
                                          (one session at a time; s to switch)
@@ -122,9 +124,9 @@ Your real repository is never touched: not its `HEAD`, not its index, not its
 staging area. `test/shadow_test.rb` asserts that, and it is the first thing to
 re-check after changing anything here.
 
-The submit hook (`UserPromptSubmit` / `beforeSubmitPrompt`) caches the prompt
-text, because the stop event doesn't carry it. The stop hook (`Stop` / `stop`)
-commits the working tree to the shadow with the prompt, session id, agent and
+The submit hook (`UserPromptSubmit` / `beforeSubmitPrompt`, or OpenCode's
+`chat.message`) caches the prompt text, because the stop event doesn't carry
+it. The stop hook (`Stop` / `stop`, or OpenCode's `session.idle`) commits the working tree to the shadow with the prompt, session id, agent and
 branch as commit trailers, so the history stays queryable with plain git.
 
 ### Why not the agents' own checkpoints
@@ -141,7 +143,7 @@ a viewer change.
 
 | Source | Row |
 |---|---|
-| `claude`, `codex`, `cursor` | a hooked prompt: the agent's own turn |
+| `claude`, `codex`, `cursor`, `opencode` | a hooked prompt: the agent's own turn |
 | `you` | changes nobody claimed: hand edits, or an agent with no hook |
 | `git` | a real commit in the project |
 
@@ -191,7 +193,7 @@ thousands of lines.
 | `show <ref> [path]` | one prompt in detail (`--patch` for the diff) |
 | `status [path]` | changes since the last prompt |
 | `diffcmd <ref> [path]` | print the git command that diffs that prompt |
-| `hook` | read a Claude Code, Codex or Cursor hook payload on stdin |
+| `hook` | read a Claude Code-style hook payload on stdin (Codex, Cursor and the OpenCode plugin send the same) |
 | `paths [path]` | where a project's shadow repo lives |
 
 ## Neovim
@@ -219,7 +221,7 @@ lib/agent_diff/
   cli.rb                subcommands
   shadow.rb             the shadow repo (all git logic lives here)
   project.rb            worktree root -> shadow repo path
-  claude_hook.rb        Claude Code, Codex + Cursor hook payloads
+  claude_hook.rb        hook payloads (Claude Code, Codex, Cursor, OpenCode)
   catalog.rb            repos, sessions, titles, totals (no rendering)
   browser.rb            the TUI
   editor.rb             which editor, and how it takes a line number
@@ -227,6 +229,8 @@ lib/agent_diff/
 hooks/
   agent_diff.sh         the hook every agent calls
   install_*_hooks.rb    merge the hooks into each agent's settings
+  opencode_plugin.js    OpenCode's events -> agent_diff.sh
+  install_opencode_plugin.rb  copy the plugin into OpenCode's plugin dir
 nvim/                   the Neovim picker
 test/                   ./test/run.sh
 ```

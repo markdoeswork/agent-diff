@@ -89,13 +89,15 @@ module AgentDiff
     end
 
     # The title the agent gave the session: Claude Code's "ai-title"
-    # transcript record, or Codex's thread name. nil when there is neither --
-    # Cursor, or a session whose transcript has been cleaned up.
+    # transcript record, Codex's thread name, or the title the OpenCode plugin
+    # saved. nil when there is none -- Cursor, or a session whose transcript
+    # has been cleaned up.
     def title_for(session_id)
       return @titles[session_id] if @titles.key?(session_id)
 
       path = transcript_index[session_id.to_s]
-      @titles[session_id] = (path && last_ai_title(path)) || codex_titles[session_id.to_s]
+      @titles[session_id] = (path && last_ai_title(path)) || codex_titles[session_id.to_s] ||
+                            saved_title(session_id)
     end
 
     private
@@ -152,6 +154,14 @@ module AgentDiff
     def transcript_index
       @transcript_index ||= Dir.glob(File.join(@claude_dir, "*", "*.jsonl"))
                                .to_h { |f| [File.basename(f, ".jsonl"), f] }
+    end
+
+    def saved_title(session_id)
+      path = File.join(@home, "titles", "#{session_id.to_s.gsub(/[^A-Za-z0-9_-]/, "_")}.txt")
+      title = File.exist?(path) ? File.read(path).strip : ""
+      title.empty? ? nil : title
+    rescue StandardError
+      nil
     end
 
     # Codex appends a line to session_index.jsonl each time it (re)names a
