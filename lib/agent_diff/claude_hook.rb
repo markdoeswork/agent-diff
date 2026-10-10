@@ -6,8 +6,8 @@ require_relative "project"
 
 module AgentDiff
   # Reads a vendor hook payload from stdin and maps it onto one remember/snap
-  # pair. Claude Code uses UserPromptSubmit + Stop; Cursor uses
-  # beforeSubmitPrompt + stop. Both cache the prompt on submit because the
+  # pair. Claude Code and Codex use UserPromptSubmit + Stop; Cursor uses
+  # beforeSubmitPrompt + stop. All cache the prompt on submit because the
   # stop event does not carry it.
   #
   # Stop fires when a turn ends, so by the time this runs the turn's file
@@ -82,9 +82,18 @@ module AgentDiff
 
       event = payload["hook_event_name"].to_s
       return "cursor" if %w[beforeSubmitPrompt stop afterAgentResponse].include?(event)
+      # Codex reuses Claude's event names. Its installed hook sets
+      # AGENT_DIFF_AGENT; failing that, its transcripts live under ~/.codex.
+      return "codex" if codex_payload?(payload)
       return "claude" if %w[UserPromptSubmit Stop].include?(event)
 
       "claude"
+    end
+
+    def codex_payload?(payload)
+      path = payload["transcript_path"].to_s
+      codex_home = ENV["CODEX_HOME"].to_s
+      path.include?("/.codex/") || (!codex_home.empty? && path.start_with?(codex_home))
     end
 
     # The herdr pane the agent ran in, when there is one. Recorded only as a

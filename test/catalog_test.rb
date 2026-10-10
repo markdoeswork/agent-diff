@@ -40,7 +40,8 @@ module Fixture
     transcript("s-one", { "type" => "ai-title", "aiTitle" => "Old title", "sessionId" => "s-one" },
                { "type" => "user", "cwd" => @work },
                { "type" => "ai-title", "aiTitle" => "Tweak a", "sessionId" => "s-one" })
-    @catalog = AgentDiff::Catalog.new(claude_dir: @claude)
+    @codex = File.join(@tmp, "codex")
+    @catalog = AgentDiff::Catalog.new(claude_dir: @claude, codex_dir: @codex)
   end
 
   def teardown
@@ -93,6 +94,18 @@ class CatalogTest < Minitest::Test
     by_id = @catalog.sessions(@shadow).to_h { |s| [s.id, s.title] }
     assert_equal "Tweak a", by_id["s-one"]
     assert_equal "add b", by_id["s-two"]
+  end
+
+  def test_codex_titles_come_from_its_session_index
+    FileUtils.mkdir_p(@codex)
+    File.write(File.join(@codex, "session_index.jsonl"), [
+      { "id" => "s-two", "thread_name" => "First name" },
+      { "id" => "s-two", "thread_name" => "Add b file" },
+      { "id" => "s-one", "thread_name" => "Ignored, Claude has a title" }
+    ].map(&:to_json).join("\n") + "\n")
+    by_id = @catalog.sessions(@shadow).to_h { |s| [s.id, s.title] }
+    assert_equal "Add b file", by_id["s-two"]
+    assert_equal "Tweak a", by_id["s-one"]
   end
 
   def test_totals_match_stat
@@ -149,6 +162,39 @@ class BrowserTest < Minitest::Test
     assert_equal :file, b.selected.kind
     b.press("h")
     refute_includes frame(b), "def a:1"
+  end
+
+  def test_e_toggles_the_file_under_the_cursor
+    b = browser
+    b.press("j")
+    b.press("e")
+    assert_includes frame(b), "def a:1"
+    b.press("j")
+    assert_equal :hunk, b.selected.kind
+    b.press("e")
+    assert_equal :file, b.selected.kind
+    refute_includes frame(b), "def a:1"
+  end
+
+  def test_e_on_a_prompt_opens_all_its_files
+    b = browser
+    assert_equal :prompt, b.selected.kind
+    b.press("e")
+    assert_equal 1, frame(b).scan("def a:1").size, "only this prompt's files open"
+    b.press("e")
+    refute_includes frame(b), "def a:1"
+  end
+
+  def test_shift_e_opens_every_file_then_closes_them
+    b = browser
+    b.press("E")
+    assert_equal 2, frame(b).scan("def a:1").size
+    b.press("j")
+    b.press("j")
+    assert_equal :hunk, b.selected.kind
+    b.press("E")
+    refute_includes frame(b), "def a:1"
+    assert_equal :file, b.selected.kind
   end
 
   def test_zoom_shows_the_full_prompt

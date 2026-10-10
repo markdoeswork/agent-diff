@@ -26,9 +26,9 @@ prompt that made them.
        ▸ mod   test/middleware/rate_limit_test.rb                                +17 -7
 ```
 
-It works with **Claude Code** and **Cursor** through their hooks, and catches
-everything else (other agents, your own edits, commits) by looking at the
-working tree.
+It works with **Claude Code**, **Codex** and **Cursor** through their hooks,
+and catches everything else (other agents, your own edits, commits) by
+looking at the working tree.
 
 ## Install
 
@@ -41,14 +41,19 @@ cd agent-diff
 ```
 
 `install.sh` links `agent-diff` into `~/.local/bin` (`BIN_DIR` overrides) and
-adds hooks to `~/.claude/settings.json` and, if Cursor is installed,
+adds hooks to `~/.claude/settings.json` and, if they are installed, Codex's
+`~/.codex/hooks.json` (`CODEX_HOME` overrides) and Cursor's
 `~/.cursor/hooks.json`. Your other hooks are left alone. It is safe to re-run,
 and re-running after moving the checkout re-points everything.
 `./install.sh --no-hooks` links only; `./install.sh --uninstall` removes the
 link and the hooks but keeps recorded history.
 
-From then on, every prompt you give Claude Code or Cursor inside a git repo is
-recorded. Run `agent-diff` to look.
+Codex runs a new hook only after you trust it, so the first Codex session after
+installing asks you to review the two agent-diff hooks. Approve them once and
+Codex runs them from then on.
+
+From then on, every prompt you give Claude Code, Codex or Cursor inside a git
+repo is recorded. Run `agent-diff` to look.
 
 ## The browser
 
@@ -62,9 +67,11 @@ session in the repo you run it from, or the newest anywhere.
 | `l` / `→` | open a file into the blocks that changed; on `… N more`, list the rest |
 | `h` / `←` | step back out: block → file → prompt; un-zoom a prompt |
 | `z`, `Space` | zoom a prompt: its full text, agent, branch and time |
-| `Enter`, `e` | open the file in your editor at that block (see below) |
+| `e` | open or close what the cursor is on: a file into its blocks, or every file under a prompt |
+| `E` | open every file in the session into its blocks; again to close them all |
+| `Enter`, `o` | open the file in your editor at that block (see below) |
 | `d` | the real diff of the file (or the whole prompt) in a pager |
-| `L` | list every file under every prompt, not just the first six |
+| `f` | list every file under every prompt, not just the first six |
 | `s`, `/`, `Tab`, `Ctrl-P` | switch session |
 | `r` | refresh |
 | `q`, `Ctrl-C` | quit |
@@ -74,8 +81,9 @@ first. Type to filter; words match anywhere in the repo name, session title
 and agent. `Enter` jumps there, `Esc` closes it. Work no hook claimed sits
 under each repo's "hand edits & commits".
 
-**Session titles** are the ones Claude Code gives its sessions, read from its
-transcripts in `~/.claude/projects`. Other sessions are titled by their first
+**Session titles** are the ones the agent gave the session: Claude Code's, read
+from its transcripts in `~/.claude/projects`, and Codex's thread names, read
+from `~/.codex/session_index.jsonl`. Cursor sessions are titled by their first
 prompt.
 
 **Blocks** are the enclosing `def`, `class`, `func` and so on. They come from
@@ -104,7 +112,7 @@ the real working tree, the same `--git-dir` / `--work-tree` split people use to
 keep their dotfiles in a bare repo.
 
 ```
-Claude Code / Cursor hook ──> agent-diff hook ──> one shadow commit per prompt
+Claude / Codex / Cursor hook ──> agent-diff hook ──> one shadow commit per prompt
                                                            │
                                                       agent-diff
                                          (one session at a time; s to switch)
@@ -133,7 +141,7 @@ a viewer change.
 
 | Source | Row |
 |---|---|
-| `claude`, `cursor` | a hooked prompt: the agent's own turn |
+| `claude`, `codex`, `cursor` | a hooked prompt: the agent's own turn |
 | `you` | changes nobody claimed: hand edits, or an agent with no hook |
 | `git` | a real commit in the project |
 
@@ -183,7 +191,7 @@ thousands of lines.
 | `show <ref> [path]` | one prompt in detail (`--patch` for the diff) |
 | `status [path]` | changes since the last prompt |
 | `diffcmd <ref> [path]` | print the git command that diffs that prompt |
-| `hook` | read a Claude Code or Cursor hook payload on stdin |
+| `hook` | read a Claude Code, Codex or Cursor hook payload on stdin |
 | `paths [path]` | where a project's shadow repo lives |
 
 ## Neovim
@@ -211,13 +219,13 @@ lib/agent_diff/
   cli.rb                subcommands
   shadow.rb             the shadow repo (all git logic lives here)
   project.rb            worktree root -> shadow repo path
-  claude_hook.rb        Claude Code + Cursor hook payloads
+  claude_hook.rb        Claude Code, Codex + Cursor hook payloads
   catalog.rb            repos, sessions, titles, totals (no rendering)
   browser.rb            the TUI
   editor.rb             which editor, and how it takes a line number
   format.rb             plain terminal output for list/show/status
 hooks/
-  agent_diff.sh         the hook both agents call
+  agent_diff.sh         the hook every agent calls
   install_*_hooks.rb    merge the hooks into each agent's settings
 nvim/                   the Neovim picker
 test/                   ./test/run.sh
@@ -225,8 +233,6 @@ test/                   ./test/run.sh
 
 ## Not done yet
 
-- A Codex hook, for real prompt labels there. Codex edits are already
-  captured as `you`.
 - Retention / garbage collection of old shadow repos, and restoring a single
   prompt.
 

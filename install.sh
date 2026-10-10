@@ -35,6 +35,7 @@ if [ "$UNINSTALL" = 1 ]; then
   [ -L "$BIN_DIR/agent-diff" ] && rm "$BIN_DIR/agent-diff" && echo "removed $BIN_DIR/agent-diff"
   "$RUBY" "$ROOT/hooks/install_claude_hooks.rb" --uninstall
   [ -d "$HOME/.cursor" ] && "$RUBY" "$ROOT/hooks/install_cursor_hooks.rb" --uninstall
+  [ -d "${CODEX_HOME:-$HOME/.codex}" ] && "$RUBY" "$ROOT/hooks/install_codex_hooks.rb" --uninstall
   echo "recorded history is left in ${AGENT_DIFF_HOME:-$HOME/.local/share/agent_diff}"
   exit 0
 fi
@@ -52,6 +53,9 @@ if [ "$HOOKS" = 1 ]; then
   "$RUBY" "$ROOT/hooks/install_claude_hooks.rb"
   if [ -d "$HOME/.cursor" ]; then
     "$RUBY" "$ROOT/hooks/install_cursor_hooks.rb"
+  fi
+  if [ -d "${CODEX_HOME:-$HOME/.codex}" ]; then
+    "$RUBY" "$ROOT/hooks/install_codex_hooks.rb"
   fi
 fi
 

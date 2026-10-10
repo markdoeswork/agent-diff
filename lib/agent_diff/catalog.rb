@@ -20,11 +20,12 @@ module AgentDiff
 
     MANUAL_ID = :manual
 
-    def initialize(home: Project.home, claude_dir: nil)
+    def initialize(home: Project.home, claude_dir: nil, codex_dir: nil)
       @home = home
       @claude_dir = claude_dir || File.join(
         File.expand_path(ENV["CLAUDE_CONFIG_DIR"] || "~/.claude"), "projects"
       )
+      @codex_dir = codex_dir || File.expand_path(ENV["CODEX_HOME"] || "~/.codex")
       @titles = {}
       @totals = {}
     end
@@ -87,14 +88,14 @@ module AgentDiff
       shadow ? @totals.delete(shadow.git_dir) : @totals.clear
     end
 
-    # The title Claude Code gave the session (its "ai-title" transcript
-    # record), or nil when there is no transcript -- Cursor, or a session
-    # whose transcript has been cleaned up.
+    # The title the agent gave the session: Claude Code's "ai-title"
+    # transcript record, or Codex's thread name. nil when there is neither --
+    # Cursor, or a session whose transcript has been cleaned up.
     def title_for(session_id)
       return @titles[session_id] if @titles.key?(session_id)
 
       path = transcript_index[session_id.to_s]
-      @titles[session_id] = path && last_ai_title(path)
+      @titles[session_id] = (path && last_ai_title(path)) || codex_titles[session_id.to_s]
     end
 
     private
@@ -151,6 +152,26 @@ module AgentDiff
     def transcript_index
       @transcript_index ||= Dir.glob(File.join(@claude_dir, "*", "*.jsonl"))
                                .to_h { |f| [File.basename(f, ".jsonl"), f] }
+    end
+
+    # Codex appends a line to session_index.jsonl each time it (re)names a
+    # thread, so the last name for an id wins.
+    def codex_titles
+      @codex_titles ||= begin
+        path = File.join(@codex_dir, "session_index.jsonl")
+        File.exist?(path) ? parse_codex_index(path) : {}
+      end
+    end
+
+    def parse_codex_index(path)
+      File.foreach(path).each_with_object({}) do |line, acc|
+        rec = (JSON.parse(line) rescue nil)
+        next unless rec.is_a?(Hash) && rec["id"] && !rec["thread_name"].to_s.strip.empty?
+
+        acc[rec["id"].to_s] = rec["thread_name"]
+      end
+    rescue StandardError
+      {}
     end
 
     # Transcripts run to megabytes and the title is rewritten as the session

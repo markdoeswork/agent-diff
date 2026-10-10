@@ -29,7 +29,7 @@ module AgentDiff
         show <ref> [path]        one prompt in detail (--patch for the diff)
         status [path]            work done since the last snapshot
         diffcmd <ref> [path]     print the git command to diff that prompt
-        hook                     read a Claude/Cursor hook payload on stdin
+        hook                     read a Claude/Codex/Cursor hook payload on stdin
         paths [path]             where this project's shadow repo lives
 
       common options:

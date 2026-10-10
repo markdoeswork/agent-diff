@@ -20,8 +20,9 @@ module AgentDiff
     KEYS = {
       "j" => :down, "k" => :up, "h" => :left, "l" => :right,
       "g" => :top, "G" => :bottom, "\u0004" => :page_down, "\u0015" => :page_up,
-      "\r" => :open, "\n" => :open, "o" => :open, "e" => :open,
-      "z" => :zoom, " " => :zoom, "d" => :diff, "L" => :all_files,
+      "\r" => :open, "\n" => :open, "o" => :open,
+      "e" => :expand_here, "E" => :expand_all,
+      "z" => :zoom, " " => :zoom, "d" => :diff, "f" => :all_files,
       "s" => :switch, "\u0010" => :switch, "\t" => :switch, "/" => :switch,
       "r" => :refresh, "q" => :quit, "\u0003" => :quit
     }.freeze
@@ -33,10 +34,10 @@ module AgentDiff
       "[5~" => :page_up, "[6~" => :page_down, "[H" => :top, "[F" => :bottom
     }.freeze
 
-    FOOTER = "j/k move  l/h open/close  z zoom prompt  enter edit  d diff  " \
-             "s switch session  r refresh  q quit"
+    FOOTER = "j/k move  l/h open/close  e/E expand/all  f all files  z zoom  " \
+             "enter edit  d diff  s switch  r refresh  q quit"
 
-    # Files listed per prompt before "… N more"; L lifts it everywhere.
+    # Files listed per prompt before "… N more"; f lifts it everywhere.
     FILE_CAP = 6
 
     attr_reader :repo, :session, :switcher
@@ -92,6 +93,8 @@ module AgentDiff
       when :open then open_selected
       when :diff then page_diff
       when :all_files then @all_everywhere = !@all_everywhere
+      when :expand_here then toggle_here
+      when :expand_all then toggle_everywhere
       when :switch then open_switcher
       when :refresh then refresh(sweep: true)
       end
@@ -321,6 +324,51 @@ module AgentDiff
         @open_files.delete(key) ? nil : select_row(:prompt, row.entry)
       when :more then select_row(:prompt, row.entry)
       when :prompt then @zoomed.delete(row.entry[:sha])
+      end
+    end
+
+    # e: open or close what the cursor is on. A file opens into its blocks,
+    # a block closes back to its file, a prompt opens or closes all its files.
+    def toggle_here
+      row = selected
+      return unless row
+
+      case row.kind
+      when :file
+        return flash("new and deleted files have no blocks") unless drillable?(row.file)
+
+        key = [row.entry[:sha], row.file[:path]]
+        @open_files.delete(key) || (@open_files[key] = true)
+      when :hunk
+        @open_files.delete([row.entry[:sha], row.file[:path]])
+        select_row(:file, row.entry, row.file)
+      when :prompt then toggle_files(drillable_keys([row.entry]))
+      when :more then @all_files[row.entry[:sha]] = true
+      end
+    end
+
+    # E: every file in the session open into its blocks, or all closed again.
+    def toggle_everywhere
+      row = selected
+      toggle_files(drillable_keys(entries))
+      # The cursor's block may have gone; land on its file instead.
+      select_row(:file, row.entry, row.file) if row&.kind == :hunk
+    end
+
+    # Opens them all unless they are all open already, then closes them.
+    def toggle_files(keys)
+      return if keys.empty?
+
+      if keys.all? { |k| @open_files[k] }
+        keys.each { |k| @open_files.delete(k) }
+      else
+        keys.each { |k| @open_files[k] = true }
+      end
+    end
+
+    def drillable_keys(list)
+      list.reject { |e| e[:kind] == "branch-change" }.flat_map do |e|
+        stat_for(e)[:files].select { |f| drillable?(f) }.map { |f| [e[:sha], f[:path]] }
       end
     end
 
