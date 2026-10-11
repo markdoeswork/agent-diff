@@ -9,7 +9,8 @@ require_relative "project"
 
 module AgentDiff
   # The viewer: one session's prompts, each with the files it changed nested
-  # beneath it, filling the whole terminal. Files open into the blocks
+  # beneath it, filling the whole terminal. The branch's real commits sit
+  # between them in time order, marked local, pushed or merged. Files open into the blocks
   # (def/class) that changed; a prompt zooms open to show its full text.
   #
   # Which session is shown is never guessed from a multiplexer. It starts on
@@ -153,6 +154,22 @@ module AgentDiff
       @session ? @session.entries : []
     end
 
+    # Prompts and branch commits, newest first. A prompt is placed by when it
+    # started, so a commit the agent made during that turn sits just above it
+    # -- prompt, then its commit -- rather than below the prompt it came from.
+    def timeline
+      return [] unless @session
+
+      commits = @catalog.commits(@repo.shadow, @session)
+      prompts = entries.each_with_index.map { |e, i| [e, (e[:started] || e[:time]).to_i, 1, i] }
+      dated = commits.each_with_index.map { |c, i| [c, c[:time].to_i, 0, i] }
+      (prompts + dated).sort_by { |_, at, kind, i| [-at, kind, i] }.map(&:first)
+    end
+
+    def commit?(e)
+      e[:kind] == "git-commit"
+    end
+
     # ---- rows ------------------------------------------------------------
 
     Row = Struct.new(:kind, :entry, :file, :hunk, :text, :rest, keyword_init: true) do
@@ -163,7 +180,7 @@ module AgentDiff
 
     def build_rows
       rows = []
-      entries.each_with_index do |e, i|
+      timeline.each_with_index do |e, i|
         rows << Row.new(kind: :rule) unless i.zero?
         rows << Row.new(kind: :prompt, entry: e)
         zoom_lines(e).each { |t| rows << Row.new(kind: :text, entry: e, text: t) } if @zoomed[e[:sha]]
@@ -230,7 +247,11 @@ module AgentDiff
       end
     end
 
+    STATE_COLOR = { "local" => 33, "pushed" => 34, "merged" => 32 }.freeze
+
     def prompt_segments(e, w)
+      return commit_segments(e, w) if commit?(e)
+
       t = @catalog.totals(@repo.shadow, e)
       mark = @zoomed[e[:sha]] ? "▾" : "▸"
       lead = " #{mark} #{age(e[:time]).rjust(3)}  "
@@ -238,6 +259,19 @@ module AgentDiff
       counts = counts_segments(t[:added], t[:deleted], dim: false)
       room = w - lead.length - who.length - Format::COUNTS_WIDTH - 1
       [[lead, 2], [who, 2], [fit(clean(e[:subject]), room), 1], [" ", nil]] + counts
+    end
+
+    # A commit reads differently from a prompt at a glance: a coloured dot
+    # and its sha in front, how far it has got (local/pushed/merged) behind.
+    def commit_segments(e, w)
+      t = @catalog.totals(@repo.shadow, e)
+      mark = @zoomed[e[:sha]] ? "▾" : "▸"
+      lead = " #{mark} #{age(e[:time]).rjust(3)}  "
+      colour = STATE_COLOR[e[:state]] || 2
+      state = e[:state].to_s.ljust(7)
+      room = w - lead.length - 2 - e[:short].length - 1 - state.length - Format::COUNTS_WIDTH - 1
+      [[lead, 2], ["● ", colour], ["#{e[:short]} ", 33], [fit(clean(e[:subject]), room), nil],
+       [state, colour], [" ", nil]] + counts_segments(t[:added], t[:deleted], dim: true)
     end
 
     def file_segments(row, w)
@@ -271,9 +305,21 @@ module AgentDiff
 
       t = @catalog.session_totals(@repo.shadow, @session)
       left = " #{@repo.name} › #{clean(@session.title)}"
-      right = "#{@session.agent} · #{@session.entries.size} prompt#{"s" unless @session.entries.size == 1} · +#{t[:added]} -#{t[:deleted]}  [s] switch "
+      right = "#{@session.agent} · #{@session.entries.size} prompt#{"s" unless @session.entries.size == 1} · " \
+              "#{commit_summary}+#{t[:added]} -#{t[:deleted]}  [s] switch "
       room = w - right.length
       Format.bold(fit(left, room), tty) + Format.dim(right, tty)
+    end
+
+    # "3 commits (1 local) · ": what of the session's work is still only on
+    # this machine.
+    def commit_summary
+      commits = @catalog.commits(@repo.shadow, @session)
+      return "" if commits.empty?
+
+      local = commits.count { |c| c[:state] == "local" }
+      detail = local.positive? ? " (#{local} local)" : ""
+      "#{commits.size} commit#{"s" unless commits.size == 1}#{detail} · "
     end
 
     def footer_line(w)
@@ -350,7 +396,7 @@ module AgentDiff
     # E: every file in the session open into its blocks, or all closed again.
     def toggle_everywhere
       row = selected
-      toggle_files(drillable_keys(entries))
+      toggle_files(drillable_keys(timeline))
       # The cursor's block may have gone; land on its file instead.
       select_row(:file, row.entry, row.file) if row&.kind == :hunk
     end
@@ -397,7 +443,8 @@ module AgentDiff
     def zoom_lines(e)
       text = e[:prompt].to_s.strip.empty? ? e[:subject] : e[:prompt]
       width = size[1] - 10
-      meta = [e[:agent] || Format.who(e), e[:branch], e[:short], e[:time].strftime("%b %-d %H:%M")]
+      who = commit?(e) ? e[:author] : (e[:agent] || Format.who(e))
+      meta = [who, e[:branch], e[:short], e[:time].strftime("%b %-d %H:%M"), e[:state]]
       wrap(clean(text), width).first(40) + [meta.compact.join(" · ")]
     end
 
@@ -555,15 +602,32 @@ module AgentDiff
 
     # ---- live updates ----------------------------------------------------
 
+    # A snapshot touches the repo's signal file; a commit, push, fetch or
+    # merge in the real repo writes its reflogs and refs. Either re-reads the
+    # session.
     def signal_stamp
       return nil unless @repo
 
-      path = Project.signal_path(@repo.root)
-      File.exist?(path) ? File.mtime(path) : nil
+      paths = [Project.signal_path(@repo.root)] + real_git_paths
+      paths.map { |p| File.exist?(p) ? File.mtime(p) : nil }
     end
 
-    # A snapshot touches the repo's signal file: re-read the session in
-    # place, keeping the cursor on the same row.
+    def real_git_paths
+      @git_dirs ||= {}
+      dirs = @git_dirs[@repo.root] ||= begin
+        out, _, ok = Open3.capture3("git", "-C", @repo.root, "rev-parse", "--path-format=absolute",
+                                    "--git-dir", "--git-common-dir")
+        ok.success? ? out.lines.map(&:strip) : []
+      end
+      return [] unless dirs.size == 2
+
+      git_dir, common = dirs
+      [File.join(git_dir, "logs", "HEAD"), File.join(common, "packed-refs"),
+       File.join(common, "FETCH_HEAD")] +
+        Dir.glob(File.join(common, "logs", "refs", "{heads,remotes}", "**", "*"))
+    end
+
+    # Re-read the session in place, keeping the cursor on the same row.
     def repo_changed?
       stamp = signal_stamp
       return false if stamp == @signal

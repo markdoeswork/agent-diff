@@ -194,7 +194,9 @@ module AgentDiff
         # the agent trailer.
         source: meta["source"] || meta["agent"],
         # The prompt as typed, before summarise() cut it down to a label.
-        prompt: meta["prompt"]
+        prompt: meta["prompt"],
+        # When the prompt was submitted; the row's own time is when it ended.
+        started: (Time.iso8601(meta["started"]) rescue nil)
       }
     end
 
@@ -240,10 +242,11 @@ module AgentDiff
     #
     # A "commit" row is empty in the shadow -- committing moves HEAD without
     # touching the worktree -- so its contents are read from the real repo
-    # instead, which is where that diff actually lives.
+    # instead, which is where that diff actually lives. So are the branch's
+    # own commits, which the browser lists by their real sha.
     def stat(sha)
-      row = entry_for(sha)
-      return real_commit_stat(row[:head]) if row && row[:kind] == "commit" && row[:head]
+      head = real_commit_for(sha)
+      return real_commit_stat(head) if head
 
       parent = "#{sha}^"
       parent = EMPTY_TREE unless git("rev-parse", "--verify", "--quiet", parent).last.success?
@@ -268,6 +271,17 @@ module AgentDiff
         deleted: files.sum { |f| f[:deleted].to_i } }
     rescue StandardError
       { files: [], added: 0, deleted: 0 }
+    end
+
+    # The real-repo commit an entry's diff lives in: a recorded "commit" row's
+    # head, or the sha itself when it names a real commit rather than a
+    # snapshot. nil for an ordinary snapshot.
+    def real_commit_for(sha)
+      row = entry_for(sha)
+      return row[:head] if row && row[:kind] == "commit" && row[:head]
+      return nil if row
+
+      git_plain("-C", @root, "cat-file", "-e", "#{sha}^{commit}").last.success? ? sha : nil
     end
 
     def entry_for(sha)
@@ -318,8 +332,8 @@ module AgentDiff
       # A "commit" row is empty in the shadow -- committing moves HEAD without
       # touching the worktree -- so read its hunks from the real repo, the
       # same split stat() makes.
-      row = entry_for(sha)
-      return real_hunks(row[:head], path) if row && row[:kind] == "commit" && row[:head]
+      head = real_commit_for(sha)
+      return real_hunks(head, path) if head
 
       parent = "#{sha}^"
       parent = EMPTY_TREE unless git("rev-parse", "--verify", "--quiet", parent).last.success?
@@ -536,9 +550,8 @@ module AgentDiff
     # diff_with_funcnames: a pathspec resolves against the process's cwd.
     def patch(sha, path: nil)
       spec = path ? ["--", path] : []
-      row = entry_for(sha)
-      if row && row[:kind] == "commit" && row[:head]
-        head = row[:head]
+      head = real_commit_for(sha)
+      if head
         from = "#{head}^"
         from = EMPTY_TREE unless git_plain("-C", @root, "rev-parse", "--verify", "--quiet", from).last.success?
         out, = Open3.capture3("git", "-C", @root, "diff", from, head, *spec, chdir: workdir)
@@ -602,6 +615,84 @@ module AgentDiff
         return true unless COMMIT_REFLOG.match?(subject.to_s)
       end
       true
+    end
+
+    # ---- the real branch ----------------------------------------------------
+
+    # Every path the given snapshots changed. Snapshots are linear, so each
+    # one's own diff against its parent is what `git show` lists.
+    def paths_for(shas)
+      return [] if shas.empty?
+
+      out, _err, ok = git("show", "--name-only", "--format=", *shas)
+      ok.success? ? out.lines.map(&:strip).reject(&:empty?).uniq : []
+    end
+
+    # The real commits on `branches` since `since`, newest first, each with
+    # the paths it touched and how far it has got: "local", "pushed" (on a
+    # remote) or "merged" (in the default branch). First-parent only, so a
+    # branch that merged main in does not list all of main's commits as its own.
+    def branch_commits(branches, since:, limit: 200)
+      refs = branches.compact.uniq.select { |b| local_branch?(b) }
+      return [] if refs.empty?
+
+      sep = "\x1e"
+      rec = "\x1d"
+      fmt = rec + %w[%H %h %ct %an %s %B].join(sep) + sep
+      out, ok = git_plain("-C", @root, "log", "--first-parent", "--name-only",
+                          "--max-count=#{limit}", "--since=#{since.to_i}",
+                          "--format=#{fmt}", *refs, "--")
+      return [] unless ok.success?
+
+      states = commit_states(refs, since)
+      out.split(rec).reject { |c| c.strip.empty? }.map do |chunk|
+        sha, short, at, author, subject, body, files = chunk.split(sep, 7)
+        { sha: sha, short: short, time: Time.at(at.to_i), subject: subject.to_s,
+          kind: "git-commit", source: "git", author: author, branch: refs.first,
+          prompt: body.to_s.strip, paths: files.to_s.lines.map(&:strip).reject(&:empty?),
+          state: states.call(sha) }
+      end
+    end
+
+    # The default branch work is adopted into: origin's HEAD, else the usual
+    # names, remote first.
+    def default_branch
+      out, ok = git_plain("-C", @root, "symbolic-ref", "--quiet", "--short",
+                          "refs/remotes/origin/HEAD")
+      return out.strip if ok.success? && !out.strip.empty?
+
+      %w[origin/main origin/master main master].find do |r|
+        git_plain("-C", @root, "rev-parse", "--verify", "--quiet", "#{r}^{commit}").last.success?
+      end
+    end
+
+    # Squash merges rewrite the commits, so those read as "pushed", never
+    # "merged"; telling them apart would mean comparing patches.
+    def commit_states(refs, since)
+      remotes, = git_plain("-C", @root, "remote")
+      unpushed = remotes.strip.empty? ? nil : rev_list(refs, since, "--remotes")
+      default = default_branch
+      # On the default branch itself, being pushed is being adopted.
+      on_default = default && refs.all? { |r| r == default.sub(%r{\A[^/]+/}, "") }
+      unmerged = default && !on_default ? rev_list(refs, since, default) : nil
+      lambda do |sha|
+        next "local" if unpushed&.include?(sha)
+        next "merged" if unmerged && !unmerged.include?(sha)
+
+        unpushed ? "pushed" : nil
+      end
+    end
+
+    def rev_list(refs, since, exclude)
+      not_args = exclude == "--remotes" ? ["--not", "--remotes"] : ["--not", exclude]
+      out, ok = git_plain("-C", @root, "rev-list", "--since=#{since.to_i}", *refs, *not_args, "--")
+      ok.success? ? out.lines.map(&:strip).to_h { |l| [l, true] } : {}
+    end
+
+    def local_branch?(name)
+      return false if name.to_s.empty? || name == "HEAD"
+
+      git_plain("-C", @root, "rev-parse", "--verify", "--quiet", "refs/heads/#{name}").last.success?
     end
 
     # The real HEAD recorded on the newest snapshot, or nil if there is none.

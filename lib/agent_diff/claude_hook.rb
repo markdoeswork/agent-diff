@@ -2,6 +2,7 @@
 
 require "fileutils"
 require "json"
+require "time"
 require_relative "project"
 
 module AgentDiff
@@ -103,9 +104,20 @@ module AgentDiff
       env.nil? || env.empty? ? nil : env
     end
 
+    # The prompt cache is written on submit, so its mtime is when the turn
+    # began. Commits made during the turn are matched to it by that.
+    def started_at(payload)
+      session = session_id(payload)
+      path = session && cache_path(session)
+      path && File.exist?(path) ? File.mtime(path).iso8601 : nil
+    rescue StandardError
+      nil
+    end
+
     def meta(payload, prompt)
       {
         prompt: prompt,
+        started: started_at(payload),
         pane: pane_id(payload),
         session: session_id(payload),
         agent: agent_name(payload)

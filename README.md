@@ -98,6 +98,34 @@ first. Type to filter; words match anywhere in the repo name, session title
 and agent. `Enter` jumps there, `Esc` closes it. Work no hook claimed sits
 under each repo's "hand edits & commits".
 
+**Commits** on the session's branch sit between its prompts, in time order,
+so a session reads as its whole lifecycle: prompts, the commits that took
+their work, and how far each commit has got.
+
+```
+ ▸  2m  ● 3f9c2e1 Return 429 with Retry-After          local      +31 -22
+ ▸  9m  the limiter should return 429 with a Retry-After header   +48 -29
+ ▸ 12m  ● a41d07e Add per-user rate limiting           merged    +164 -12
+ ▸ 15m  add a per-user limit, 100 requests a minute              +164 -12
+```
+
+| State | |
+|---|---|
+| `local` | only on this machine |
+| `pushed` | on a remote branch (on the default branch, that means adopted) |
+| `merged` | in the default branch (`origin/HEAD`, else `main` / `master`) |
+
+The states come from your remote-tracking refs, so they are as fresh as your
+last fetch or push; agent-diff never fetches. A squash merge rewrites the
+commits, so its originals stay `pushed`. The header counts the session's
+commits and how many are still local.
+
+A session lists the commits made on its branch while it ran, plus later ones
+that touch a file it changed, which is the session's work being committed
+afterwards. Other later commits to the branch are left out. A commit made
+during an agent's turn sits just above that prompt. Commits open into files
+and blocks like prompts do, and `d` shows the commit's own diff.
+
 **Session titles** are the ones the agent gave the session: Claude Code's, read
 from its transcripts in `~/.claude/projects`, Codex's thread names, read
 from `~/.codex/session_index.jsonl`, and OpenCode's, which the plugin saves as
@@ -111,7 +139,8 @@ in several places inside one method fold into a single row, and `Enter` lands
 on the method's declaration. New and deleted files don't open into blocks,
 since their single hunk would only repeat the row's counts.
 
-The view updates on its own when the repo on screen records a prompt.
+The view updates on its own when the repo on screen records a prompt, or when
+its real repo commits, pushes, fetches or merges.
 
 **Editor.** `Enter` uses `AGENT_DIFF_EDITOR`, else `$VISUAL`, else `$EDITOR`,
 else the first of `nvim`, `vim`, `vi`, `nano`, `hx`, `micro`, `kak` and `emacs`
@@ -160,9 +189,9 @@ a viewer change.
 |---|---|
 | `claude`, `codex`, `cursor`, `opencode` | a hooked prompt: the agent's own turn |
 | `you` | changes nobody claimed: hand edits, or an agent with no hook |
-| `git` | a real commit in the project |
+| `git` | a real commit on the session's branch |
 
-`you` and `git` rows come from a sweep that runs whenever history is read (the
+`you` rows come from a sweep that runs whenever history is read (the
 browser, `list`), so there's no daemon to keep running. It is skipped while an
 agent turn is in flight (the submit hook sets a marker, the stop hook clears
 it), so an agent's half-finished work isn't claimed as yours. Markers older
@@ -170,9 +199,11 @@ than 15 minutes are ignored, so an agent that crashes without firing its stop
 hook can't wedge a project. Consecutive hand edits collapse into one growing
 row instead of stacking.
 
-A commit moves `HEAD` without touching any file, so commits are found by
-comparing the real `HEAD` with the one recorded on the last snapshot, and
-their contents are read from the real repo. A checkout between prompts is
+`git` rows are read from the real repo's history each time the browser draws,
+not recorded, so every commit shows, including ones an agent makes mid-turn
+and several made between looks. Each prompt records its branch and when it
+started, which is how commits are matched to sessions and turns. The sweep
+still notes when the real `HEAD` moves, so that a checkout between prompts is
 labelled `branch change` instead of being reported as an agent writing
 thousands of lines.
 

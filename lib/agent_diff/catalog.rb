@@ -20,6 +20,12 @@ module AgentDiff
 
     MANUAL_ID = :manual
 
+    # Branch commits listed per session, newest first.
+    COMMIT_LIMIT = 30
+    # How far before its first recorded prompt a session may have started,
+    # for rows recorded before prompts carried their start time.
+    START_GRACE = 15 * 60
+
     def initialize(home: Project.home, claude_dir: nil, codex_dir: nil)
       @home = home
       @claude_dir = claude_dir || File.join(
@@ -28,6 +34,7 @@ module AgentDiff
       @codex_dir = codex_dir || File.expand_path(ENV["CODEX_HOME"] || "~/.codex")
       @titles = {}
       @totals = {}
+      @commits = {}
     end
 
     # Every shadow repo whose worktree is known, most recently active first.
@@ -48,7 +55,9 @@ module AgentDiff
     # -- hand edits and real commits -- share one "manual" session so they
     # stay visible without each becoming a session of its own.
     def sessions(shadow, limit: 1000)
-      entries = shadow.entries(limit: limit)
+      # "commit" rows only mark where the real HEAD was; the commits
+      # themselves are read from the real branch, by commits().
+      entries = shadow.entries(limit: limit).reject { |e| e[:kind] == "commit" }
       groups = entries.group_by { |e| e[:session_id] || MANUAL_ID }
       list = groups.map do |id, rows|
         manual = id == MANUAL_ID
@@ -85,7 +94,34 @@ module AgentDiff
 
     # Forget cached counts, e.g. after the repo recorded a new prompt.
     def reset(shadow = nil)
-      shadow ? @totals.delete(shadow.git_dir) : @totals.clear
+      if shadow
+        @totals.delete(shadow.git_dir)
+        @commits.delete_if { |(dir, _), _| dir == shadow.git_dir }
+      else
+        @totals.clear
+        @commits.clear
+      end
+    end
+
+    # The real commits that belong in a session's timeline: those on its
+    # branch made while it ran, and those made since that touch a file it
+    # changed -- the session's work being committed, pushed and merged. Other
+    # people's later commits to the same branch are left out.
+    def commits(shadow, session)
+      @commits[[shadow.git_dir, session.id]] ||= begin
+        prompts = session.entries
+        first = prompts.min_by { |e| e[:time] }
+        if first
+          since = first[:started] || (first[:time] - START_GRACE)
+          ended = prompts.map { |e| e[:time] }.max
+          paths = shadow.paths_for(prompts.map { |e| e[:sha] }).to_h { |p| [p, true] }
+          shadow.branch_commits(prompts.map { |e| e[:branch] }, since: since)
+                .select { |c| c[:time] <= ended || c[:paths].any? { |p| paths[p] } }
+                .first(COMMIT_LIMIT)
+        else
+          []
+        end
+      end
     end
 
     # The title the agent gave the session: Claude Code's "ai-title"
